@@ -73,3 +73,12 @@ synapse:[/home/user]> exit
 
 - **`main.cpp`**: Contains the core Readline execution loop, input tokenization, process forking, thread management, and built-in command handlers.
 - **`ai_agent.cpp` / `ai_agent.h`**: Manages the HTTP payload and connection to the Gemini API using `libcurl` and processes the JSON response. Uses a system prompt to give the AI context about the shell's features.
+
+## Contributors
+
+This project was built collaboratively as a group project.
+
+- **Ayan Jan** 
+- **Hassan Khan** 
+
+Contributions and commit history for this repository can be viewed under the [Contributors](https://github.com/1o1ayaan/synapse-custom-shell/graphs/contributors) tab.
