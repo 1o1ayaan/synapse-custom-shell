@@ -8,15 +8,39 @@
 #include <cerrno>
 #include <cstdlib>
 #include <pthread.h>
+#include <cctype>
+#include <readline/readline.h>
+#include <readline/history.h>
+#include "ai_agent.h"
+
+// Mutex to ensure clean printing between main shell loop and background threads
+pthread_mutex_t print_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // Splits the input string into a vector of tokens
 std::vector<std::string> tokenize(const std::string& input) {
     std::vector<std::string> tokens;
-    std::istringstream stream(input);
-    std::string token;
-    while (stream >> token) {
-        tokens.push_back(token);
+    std::string current_token;
+    bool in_quotes = false;
+
+    for (size_t i = 0; i < input.length(); ++i) {
+        char c = input[i];
+
+        if (c == '"') {
+            in_quotes = !in_quotes;
+        } else if (std::isspace(static_cast<unsigned char>(c)) && !in_quotes) {
+            if (!current_token.empty()) {
+                tokens.push_back(current_token);
+                current_token.clear();
+            }
+        } else {
+            current_token += c;
+        }
     }
+
+    if (!current_token.empty()) {
+        tokens.push_back(current_token);
+    }
+
     return tokens;
 }
 
@@ -66,14 +90,30 @@ int main() {
     
     // Continuous read-parse-execute loop
     while (true) {
-        std::cout << "synapse> ";
+        pthread_mutex_lock(&print_mutex);
+        char cwd[1024];
+        std::string current_pwd = "";
+        if (getcwd(cwd, sizeof(cwd)) != nullptr) {
+            current_pwd = cwd;
+        }
+        std::string prompt = "synapse:[" + current_pwd + "]> ";
+        pthread_mutex_unlock(&print_mutex);
         
-        // Read standard input
-        if (!std::getline(std::cin, input)) {
+        char* line = readline(prompt.c_str());
+        
+        if (!line) {
             // Handle EOF (e.g., Ctrl+D) gracefully
             std::cout << std::endl;
             break;
         }
+
+        input = line;
+        
+        if (!input.empty()) {
+            add_history(line);
+        }
+        
+        free(line);
 
         if (input.empty()) {
             continue;
@@ -145,6 +185,44 @@ int main() {
                         std::cout << cwd << std::endl;
                     }
                 }
+            }
+            continue;
+        }
+
+        // Built-in command: ask
+        if (tokens[0] == "ask") {
+            if (tokens.size() < 2) {
+                std::cerr << "synapse: ask: missing prompt" << std::endl;
+                continue;
+            }
+            std::string prompt;
+            for (size_t i = 1; i < tokens.size(); ++i) {
+                prompt += tokens[i] + (i == tokens.size() - 1 ? "" : " ");
+            }
+            
+            // Run on a background thread
+            std::string* prompt_ptr = new std::string(prompt);
+            pthread_t ai_thread;
+            if (pthread_create(&ai_thread, nullptr, [](void* arg) -> void* {
+                std::string* p = static_cast<std::string*>(arg);
+                std::string response = ask_gemini(*p);
+                delete p;
+                
+                pthread_mutex_lock(&print_mutex);
+                char cwd[1024];
+                std::string current_pwd = "";
+                if (getcwd(cwd, sizeof(cwd)) != nullptr) {
+                    current_pwd = cwd;
+                }
+                std::cout << "\n\n[AI] " << response << "\nsynapse:[" << current_pwd << "]> " << std::flush;
+                pthread_mutex_unlock(&print_mutex);
+                
+                return nullptr;
+            }, prompt_ptr) != 0) {
+                std::cerr << "synapse: failed to create AI thread" << std::endl;
+                delete prompt_ptr;
+            } else {
+                pthread_detach(ai_thread);
             }
             continue;
         }
