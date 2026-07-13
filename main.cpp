@@ -11,10 +11,47 @@
 #include <cctype>
 #include <readline/readline.h>
 #include <readline/history.h>
+#include <dirent.h>
 #include "ai_agent.h"
 
 // Mutex to ensure clean printing between main shell loop and background threads
 pthread_mutex_t print_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// Custom ls implementation
+void custom_ls() {
+    DIR *dir;
+    struct dirent *ent;
+    if ((dir = opendir(".")) != nullptr) {
+        while ((ent = readdir(dir)) != nullptr) {
+            std::string name = ent->d_name;
+            
+            if (name.length() > 0 && name[0] == '.') {
+                continue; // Skip hidden files
+            }
+            
+            std::string color = "\033[0m"; // Default
+            
+            if (name == "Makefile") {
+                color = "\033[1;35m";
+            } else if (name == "synapse" || name == "synapse.exe") {
+                color = "\033[1;31m";
+            } else if (name.length() >= 4 && name.substr(name.length() - 4) == ".cpp") {
+                color = "\033[1;32m";
+            } else if ((name.length() >= 2 && name.substr(name.length() - 2) == ".h") || 
+                       (name.length() >= 4 && name.substr(name.length() - 4) == ".hpp")) {
+                color = "\033[1;36m";
+            } else if (name.length() >= 2 && name.substr(name.length() - 2) == ".o") {
+                color = "\033[2;37m";
+            }
+            
+            std::cout << color << name << "\033[0m  ";
+        }
+        std::cout << std::endl;
+        closedir(dir);
+    } else {
+        std::cerr << "synapse: ls: could not open directory" << std::endl;
+    }
+}
 
 // Splits the input string into a vector of tokens
 std::vector<std::string> tokenize(const std::string& input) {
@@ -96,7 +133,7 @@ int main() {
         if (getcwd(cwd, sizeof(cwd)) != nullptr) {
             current_pwd = cwd;
         }
-        std::string prompt = "synapse:[" + current_pwd + "]> ";
+        std::string prompt = "\001\033[1;32m\002synapse:\001\033[1;34m\002[" + current_pwd + "]\001\033[0m\002> ";
         pthread_mutex_unlock(&print_mutex);
         
         char* line = readline(prompt.c_str());
@@ -189,6 +226,12 @@ int main() {
             continue;
         }
 
+        // Built-in command: ls
+        if (tokens[0] == "ls") {
+            custom_ls();
+            continue;
+        }
+
         // Built-in command: ask
         if (tokens[0] == "ask") {
             if (tokens.size() < 2) {
@@ -214,7 +257,7 @@ int main() {
                 if (getcwd(cwd, sizeof(cwd)) != nullptr) {
                     current_pwd = cwd;
                 }
-                std::cout << "\n\n[AI] " << response << "\nsynapse:[" << current_pwd << "]> " << std::flush;
+                std::cout << "\n\n[AI] " << response << "\n\033[1;32msynapse:\033[1;34m[" << current_pwd << "]\033[0m> " << std::flush;
                 pthread_mutex_unlock(&print_mutex);
                 
                 return nullptr;
