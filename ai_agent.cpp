@@ -14,7 +14,7 @@ static size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* use
     return total_size;
 }
 
-std::string ask_gemini(const std::string& prompt) {
+std::string send_gemini_request(const std::string& full_prompt) {
     const char* api_key_env = std::getenv("GEMINI_API_KEY");
     if (!api_key_env) {
         return "Error: GEMINI_API_KEY environment variable is not set.";
@@ -22,9 +22,6 @@ std::string ask_gemini(const std::string& prompt) {
 
     std::string api_key(api_key_env);
     std::string url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=" + api_key;
-
-    std::string system_context = "You are the AI assistant natively integrated into Synapse, a custom POSIX-compliant C++ Linux shell. The Synapse shell supports standard Linux commands via execvp, background multithreading using the & symbol at the end of a command, and custom built-ins including cd, cd - (toggle previous directory), exit, and ask (which triggers you). Answer questions helpfully and concisely.\n\n";
-    std::string full_prompt = system_context + prompt;
 
     // Format the prompt into a Gemini-compatible JSON payload
     json payload = {
@@ -87,4 +84,19 @@ std::string ask_gemini(const std::string& prompt) {
     } catch (const json::exception& e) {
         return "Error parsing JSON response: " + std::string(e.what());
     }
+}
+
+std::string ask_gemini(const std::string& prompt) {
+    std::string system_context = "You are the AI assistant natively integrated into Synapse, a custom POSIX-compliant C++ Linux shell. The Synapse shell supports standard Linux commands via execvp, background execution using the & symbol, and custom built-ins including cd, cd - (toggle previous directory), exit, jobs, and ask (which triggers you). Answer questions helpfully and concisely.\n\n";
+    return send_gemini_request(system_context + prompt);
+}
+
+std::string ask_gemini_explain(const std::string& command) {
+    std::string system_context = "You are a Linux command expert. Explain the following shell command concisely. Break down what the command does and what any flags/arguments mean. Do not wrap the explanation in markdown code blocks unless giving an example. Command to explain: ";
+    return send_gemini_request(system_context + command);
+}
+
+std::string ask_gemini_autofix(const std::string& failed_command) {
+    std::string system_context = "The following Linux command just failed to execute or returned a non-zero exit code. Suggest what the user might have meant or how to fix it in 1-2 short sentences. Make it sound helpful and brief. Failed command: ";
+    return send_gemini_request(system_context + failed_command);
 }
