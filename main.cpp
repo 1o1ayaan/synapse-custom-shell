@@ -275,7 +275,40 @@ void execute_pipeline(const std::vector<Command>& pipeline, bool is_background, 
     }
 }
 
+void print_startup_banner() {
+    std::cout << "\033[38;2;0;255;150m\n"
+              << "   _____                                \n"
+              << "  / ___/ __  __ ____   ____ _ ____   ___  \n"
+              << "  \\__ \\ / / / // __ \\ / __ `// __ \\ / _ \\ \n"
+              << " ___/ // /_/ // / / // /_/ // /_/ //  __/ \n"
+              << "/____/ \\__, //_/ /_/ \\__,_// .___/ \\___/  \n"
+              << "      /____/              /_/             \n\n"
+              << "v1.0 | AI-Integrated POSIX Shell\n"
+              << "\033[0m" << std::endl;
+}
+
+std::string build_prompt() {
+    char cwd[1024];
+    if (getcwd(cwd, sizeof(cwd)) == nullptr) {
+        cwd[0] = '\0';
+    }
+    
+    std::string bg_blue = "\033[48;2;30;60;120m";
+    std::string fg_white = "\033[38;2;255;255;255m";
+    std::string fg_cyan = "\033[38;2;0;255;200m";
+    std::string reset = "\033[0m";
+    
+    // We add \001 and \002 around ANSI codes to ensure readline correctly calculates line widths
+    std::string prompt = "\001" + fg_cyan + "\002 synapse\001" + reset + "\002 : \001" + bg_blue + fg_white + "\002  " + std::string(cwd) + " \001" + reset + fg_cyan + "\002 ❯ \001" + reset + "\002";
+    
+    // As per user structure requirement (if exact literal matching is intended despite readline bugs):
+    // return fg_cyan + " synapse" + reset + " : " + bg_blue + fg_white + "  " + std::string(cwd) + " " + reset + fg_cyan + " ❯ " + reset;
+    
+    return prompt;
+}
+
 int main() {
+    print_startup_banner();
     // Ignore SIGINT in the shell, so Ctrl+C doesn't kill it
     signal(SIGINT, SIG_IGN);
 
@@ -291,18 +324,7 @@ int main() {
     
     // Continuous read-parse-execute loop
     while (true) {
-        pthread_mutex_lock(&print_mutex);
-        char cwd[1024];
-        std::string current_pwd = "";
-        if (getcwd(cwd, sizeof(cwd)) != nullptr) {
-            current_pwd = cwd;
-        }
-        
-        std::string prompt_color = (last_exit_status == 0) ? "\033[1;32m" : "\033[1;31m";
-        std::string prompt = "\001" + prompt_color + "\002synapse:\001\033[1;34m\002[" + current_pwd + "]\001\033[0m\002> ";
-        pthread_mutex_unlock(&print_mutex);
-        
-        char* line = readline(prompt.c_str());
+        char* line = readline(build_prompt().c_str());
         
         if (!line) {
             // Handle EOF (e.g., Ctrl+D) gracefully
@@ -489,7 +511,7 @@ int main() {
             
             // Print the command so user can verify what the agent is doing
             pthread_mutex_lock(&print_mutex);
-            std::cout << "\033[1;35m[Agent] Executing:\033[0m " << cmd_str << std::endl;
+            std::cout << "\033[1;35m[Agent] Executing: " << cmd_str << "\033[0m" << std::endl;
             pthread_mutex_unlock(&print_mutex);
             
             // To properly track directory changes (like `mkdir foo && cd foo`),
