@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <sstream>
+#include <fstream>
 #include <unistd.h>
 #include <sys/wait.h>
 #include <cstring>
@@ -468,6 +469,87 @@ int main() {
                 delete prompt_ptr;
             } else {
                 pthread_detach(ai_thread);
+            }
+            continue;
+        }
+
+        // Built-in command: do
+        if (tokens[0] == "do") {
+            if (tokens.size() < 2) {
+                std::cerr << "synapse: do: missing task" << std::endl;
+                continue;
+            }
+            std::string task;
+            for (size_t i = 1; i < tokens.size(); ++i) {
+                task += tokens[i] + (i == tokens.size() - 1 ? "" : " ");
+            }
+            
+            // Call Groq API synchronously to get the raw bash command
+            std::string cmd_str = get_agent_command(task);
+            
+            // Print the command so user can verify what the agent is doing
+            pthread_mutex_lock(&print_mutex);
+            std::cout << "\033[1;35m[Agent] Executing:\033[0m " << cmd_str << std::endl;
+            pthread_mutex_unlock(&print_mutex);
+            
+            // To properly track directory changes (like `mkdir foo && cd foo`),
+            // we let /bin/sh execute the entire command, then dump its final
+            // working directory to a temp file, which the parent shell reads.
+            std::string temp_pwd_file = "/tmp/synapse_pwd_" + std::to_string(getpid()) + ".txt";
+            std::string wrapper_cmd = cmd_str + "\npwd > " + temp_pwd_file;
+            
+            // Set OLDPWD so /bin/sh can handle `cd -` if needed
+            setenv("OLDPWD", oldpwd.c_str(), 1);
+
+            // Execute using /bin/sh to support pipes and redirections
+            pid_t pid = fork();
+            if (pid == 0) {
+                // Child process
+                signal(SIGINT, SIG_DFL);
+                execl("/bin/sh", "sh", "-c", wrapper_cmd.c_str(), NULL);
+                perror("synapse: execl");
+                exit(127);
+            } else if (pid < 0) {
+                perror("synapse: fork");
+            } else {
+                // Parent process
+                if (is_background) {
+                    pthread_mutex_lock(&jobs_mutex);
+                    background_jobs[pid] = cmd_str;
+                    pthread_mutex_unlock(&jobs_mutex);
+                    std::cout << "[Background agent job started] PID: " << pid << std::endl;
+                } else {
+                    int status;
+                    waitpid(pid, &status, 0);
+                    
+                    // Sync the parent's directory to the child's final directory
+                    std::ifstream pwd_file(temp_pwd_file);
+                    if (pwd_file.is_open()) {
+                        std::string new_dir;
+                        std::getline(pwd_file, new_dir);
+                        pwd_file.close();
+                        
+                        char cur_dir[1024];
+                        std::string current_pwd_save = "";
+                        if (getcwd(cur_dir, sizeof(cur_dir)) != nullptr) {
+                            current_pwd_save = cur_dir;
+                        }
+                        
+                        // If the directory actually changed, update chdir and oldpwd
+                        if (!new_dir.empty() && new_dir != current_pwd_save) {
+                            if (chdir(new_dir.c_str()) == 0) {
+                                oldpwd = current_pwd_save;
+                            }
+                        }
+                        remove(temp_pwd_file.c_str());
+                    }
+                    
+                    if (WIFEXITED(status)) {
+                        last_exit_status = WEXITSTATUS(status);
+                    } else {
+                        last_exit_status = 1;
+                    }
+                }
             }
             continue;
         }

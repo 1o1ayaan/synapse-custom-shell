@@ -12,4 +12,7 @@ std::string ask_gemini_explain(const std::string& command);
 // Asks Gemini to auto-suggest a fix for a failed shell command.
 std::string ask_gemini_autofix(const std::string& failed_command);
 
+// Autonomous agent command via Groq
+std::string get_agent_command(const std::string& user_request);
+
 #endif // AI_AGENT_H
