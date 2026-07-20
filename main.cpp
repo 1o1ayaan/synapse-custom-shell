@@ -16,10 +16,39 @@
 #include <fcntl.h>
 #include <map>
 #include <signal.h>
+#include <atomic>
+#include <thread>
 #include "ai_agent.h"
 
 // Mutex to ensure clean printing between main shell loop and background threads
 pthread_mutex_t print_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+std::atomic<bool> agent_loading(false);
+
+void loading_spinner() {
+    const char* frames[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
+    int i = 0;
+    while (agent_loading) {
+        std::cout << "\r\033[38;2;255;165;0m" << frames[i] << " [Agent] Thinking...\033[0m" << std::flush;
+        usleep(100000);
+        i = (i + 1) % 10;
+    }
+}
+
+std::thread spinner_thread;
+
+void start_loading_animation() {
+    agent_loading = true;
+    spinner_thread = std::thread(loading_spinner);
+}
+
+void stop_loading_animation() {
+    agent_loading = false;
+    if (spinner_thread.joinable()) {
+        spinner_thread.join();
+    }
+    std::cout << "\r\033[K" << std::flush;
+}
 
 // Job tracking
 std::map<pid_t, std::string> background_jobs;
@@ -254,13 +283,13 @@ void execute_pipeline(const std::vector<Command>& pipeline, bool is_background, 
                     delete p;
                     
                     pthread_mutex_lock(&print_mutex);
-                    std::cout << "\n\033[1;33m[AI Auto-Fix]\033[0m " << response << "\nsynapse> " << std::flush;
+                    std::cout << "\n\033[1;33m[AI Auto-Fix]\033[0m " << response << "\n" << std::flush;
                     pthread_mutex_unlock(&print_mutex);
                     return nullptr;
                 }, prompt_ptr) != 0) {
                     delete prompt_ptr;
                 } else {
-                    pthread_detach(ai_thread);
+                    pthread_detach(ai_thread); // Auto-fix stays detached as it's a background process
                 }
             }
         }
@@ -276,14 +305,16 @@ void execute_pipeline(const std::vector<Command>& pipeline, bool is_background, 
 }
 
 void print_startup_banner() {
-    std::cout << "\033[38;2;0;255;150m\n"
-              << "   _____                                \n"
-              << "  / ___/ __  __ ____   ____ _ ____   ___  \n"
-              << "  \\__ \\ / / / // __ \\ / __ `// __ \\ / _ \\ \n"
-              << " ___/ // /_/ // / / // /_/ // /_/ //  __/ \n"
-              << "/____/ \\__, //_/ /_/ \\__,_// .___/ \\___/  \n"
-              << "      /____/              /_/             \n\n"
+    // \033[38;2;255;20;20m is the ANSI true-color code for Bright Red
+    std::cout << "\033[38;2;255;20;20m\n"
+              << "  ____ __  __ _   _    _    ____  ____  _____ \n"
+              << " / ___|\\ \\/ /| \\ | |  / \\  |  _ \\/ ___|| ____|\n"
+              << " \\___ \\ \\  / |  \\| | / _ \\ | |_) \\___ \\|  _|  \n"
+              << "  ___) | | | | |\\  |/ ___ \\|  __/ ___) | |___ \n"
+              << " |____/  |_| |_| \\_/_/   \\_\\_|   |____/|_____|\n"
+              << "                                              \n"
               << "v1.0 | AI-Integrated POSIX Shell\n"
+              << "MADE BY HASSAN AND AYAN"
               << "\033[0m" << std::endl;
 }
 
@@ -293,18 +324,12 @@ std::string build_prompt() {
         cwd[0] = '\0';
     }
     
-    std::string bg_blue = "\033[48;2;30;60;120m";
-    std::string fg_white = "\033[38;2;255;255;255m";
-    std::string fg_cyan = "\033[38;2;0;255;200m";
-    std::string reset = "\033[0m";
+    std::string bg_blue = "\001\033[48;2;30;60;120m\002";
+    std::string fg_white = "\001\033[38;2;255;255;255m\002";
+    std::string fg_cyan = "\001\033[38;2;0;255;200m\002";
+    std::string reset = "\001\033[0m\002";
     
-    // We add \001 and \002 around ANSI codes to ensure readline correctly calculates line widths
-    std::string prompt = "\001" + fg_cyan + "\002 synapse\001" + reset + "\002 : \001" + bg_blue + fg_white + "\002  " + std::string(cwd) + " \001" + reset + fg_cyan + "\002 ❯ \001" + reset + "\002";
-    
-    // As per user structure requirement (if exact literal matching is intended despite readline bugs):
-    // return fg_cyan + " synapse" + reset + " : " + bg_blue + fg_white + "  " + std::string(cwd) + " " + reset + fg_cyan + " ❯ " + reset;
-    
-    return prompt;
+    return fg_cyan + "🤖 synapse" + reset + " : " + bg_blue + fg_white + " 📁 " + std::string(cwd) + " " + reset + fg_cyan + " ❯ " + reset;
 }
 
 int main() {
@@ -446,11 +471,13 @@ int main() {
             pthread_t ai_thread;
             if (pthread_create(&ai_thread, nullptr, [](void* arg) -> void* {
                 std::string* p = static_cast<std::string*>(arg);
+                start_loading_animation();
                 std::string response = ask_gemini_explain(*p);
+                stop_loading_animation();
                 delete p;
                 
                 pthread_mutex_lock(&print_mutex);
-                std::cout << "\n\033[1;36m[AI Explanation]\033[0m\n" << response << "\nsynapse> " << std::flush;
+                std::cout << "\n\033[1;36m[AI Explanation]\033[0m\n" << response << "\n" << std::flush;
                 pthread_mutex_unlock(&print_mutex);
                 
                 return nullptr;
@@ -458,7 +485,7 @@ int main() {
                 std::cerr << "synapse: failed to create AI thread" << std::endl;
                 delete prompt_ptr;
             } else {
-                pthread_detach(ai_thread);
+                pthread_join(ai_thread, nullptr);
             }
             continue;
         }
@@ -478,11 +505,13 @@ int main() {
             pthread_t ai_thread;
             if (pthread_create(&ai_thread, nullptr, [](void* arg) -> void* {
                 std::string* p = static_cast<std::string*>(arg);
+                start_loading_animation();
                 std::string response = ask_gemini(*p);
+                stop_loading_animation();
                 delete p;
                 
                 pthread_mutex_lock(&print_mutex);
-                std::cout << "\n\n\033[1;35m[AI]\033[0m " << response << "\nsynapse> " << std::flush;
+                std::cout << "\n\n\033[1;35m[AI]\033[0m " << response << "\n" << std::flush;
                 pthread_mutex_unlock(&print_mutex);
                 
                 return nullptr;
@@ -490,7 +519,7 @@ int main() {
                 std::cerr << "synapse: failed to create AI thread" << std::endl;
                 delete prompt_ptr;
             } else {
-                pthread_detach(ai_thread);
+                pthread_join(ai_thread, nullptr);
             }
             continue;
         }
@@ -505,13 +534,18 @@ int main() {
             for (size_t i = 1; i < tokens.size(); ++i) {
                 task += tokens[i] + (i == tokens.size() - 1 ? "" : " ");
             }
+            // Spawn loading spinner thread
+            start_loading_animation();
             
             // Call Groq API synchronously to get the raw bash command
             std::string cmd_str = get_agent_command(task);
             
+            // Stop spinner and clear line
+            stop_loading_animation();
+            
             // Print the command so user can verify what the agent is doing
             pthread_mutex_lock(&print_mutex);
-            std::cout << "\033[1;35m[Agent] Executing: " << cmd_str << "\033[0m" << std::endl;
+            std::cout << "\033[38;5;207m[Agent] Executing: " << cmd_str << "\033[0m\n";
             pthread_mutex_unlock(&print_mutex);
             
             // To properly track directory changes (like `mkdir foo && cd foo`),

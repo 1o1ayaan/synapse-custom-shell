@@ -118,6 +118,7 @@ std::string get_agent_command(const std::string& user_request) {
                 {"content", "You are an expert autonomous Linux terminal agent executing commands inside a custom C++ shell via /bin/sh -c.\n\n"
                             "CRITICAL PORTABILITY & SYNTAX RULES:\n\n"
                             "When asked to write code or scripts to a file, NEVER use printf or echo, as they fail on % operators, $ variables, and nested quotes. You MUST ALWAYS use the cat << 'EOF' > filename pattern. Ensure the EOF delimiter is enclosed in single quotes to prevent premature variable expansion.\n\n"
+                            "When using the cat << 'EOF' > filename pattern to write code or files, the closing EOF delimiter MUST be on its own line with absolutely nothing else after it. Any chaining commands like && g++ must be placed on a completely new line after the line containing EOF. Never output EOF && ... on the same line.\n\n"
                             "When asked to compile and run code, or perform a sequence of actions, chain the commands together safely using && (e.g., cat << 'EOF' > main.cpp ... EOF && g++ main.cpp -o main && ./main).\n\n"
                             "When asked to navigate directories, output ONLY the cd command. Always wrap directory names containing spaces in double quotes (e.g., cd \"synapse shell\").\n\n"
                             "OUTPUT FORMAT:\n"
