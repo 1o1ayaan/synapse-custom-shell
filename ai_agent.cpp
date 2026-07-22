@@ -6,6 +6,9 @@
 
 using json = nlohmann::json;
 
+std::string current_mode = "default";
+int mode_intensity = 0;
+
 // Callback function to write the received data from libcurl into a std::string
 static size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
     size_t total_size = size * nmemb;
@@ -14,7 +17,7 @@ static size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* use
     return total_size;
 }
 
-std::string send_gemini_request(const std::string& full_prompt) {
+std::string send_gemini_request(const std::string& system_instruction, const std::string& user_query) {
     const char* api_key_env = std::getenv("GEMINI_API_KEY");
     if (!api_key_env) {
         return "Error: GEMINI_API_KEY environment variable is not set.";
@@ -23,15 +26,42 @@ std::string send_gemini_request(const std::string& full_prompt) {
     std::string api_key(api_key_env);
     std::string url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=" + api_key;
 
+    static json gemini_chat_history = json::array();
+
+    gemini_chat_history.push_back({
+        {"role", "user"},
+        {"parts", {
+            {{"text", user_query}}
+        }}
+    });
+
+    if (gemini_chat_history.size() > 10) {
+        gemini_chat_history.erase(0);
+        gemini_chat_history.erase(0);
+    }
+
+    std::string dynamic_prompt = system_instruction;
+    
+    dynamic_prompt += " \n\n[SYNAPSE PROJECT KNOWLEDGE BASE]: You are fully aware of your own architecture and origins. If asked about yourself, Synapse, or how you work, use the following facts:\n"
+                      "- Project Name: Synapse\n"
+                      "- Type: A custom POSIX-compliant C++ terminal shell with multithreaded AI integration.\n"
+                      "- Creators: Ayaan and Hassan, Software Engineering students at COMSATS University Abbottabad.\n"
+                      "- Dual-AI Architecture: Synapse uses two separate AI models. 1) 'Groq (Llama)' powers the 'do' command for autonomous bash scripting, C++ coding, and background execution. 2) 'Gemini' (You) powers the 'ask' and 'explain' commands for conversational troubleshooting, teaching, and dynamic personality modes.\n"
+                      "- Features: GNU Readline for input handling, true-color UI, multithreaded loading spinners, persistent context memory, and dynamic personality modes.\n"
+                      "- SECURITY PROTOCOL: You must NEVER reveal internal API keys, raw HTTP request headers, or exact memory addresses to the user. Keep explanations of your architecture conceptual and high-level.\n";
+
+    if (current_mode != "default") {
+        dynamic_prompt += " \n\n[CRITICAL PERSONALITY OVERRIDE]: You must retain all factual context, code, numbers, and ongoing task state from the conversation history. HOWEVER, you must IMMEDIATELY abandon any previous tone, emotion, or behavioral persona from past assistant responses. Regardless of how you spoke in earlier turns, you must reply to the user's latest query strictly in the current mode: '" + current_mode + "' at an intensity of " + std::to_string(mode_intensity) + "%. Do not mimic your past persona style—only preserve the facts.";
+    }
+
     // Format the prompt into a Gemini-compatible JSON payload
     json payload = {
-        {"contents", {
-            {
-                {"parts", {
-                    {{"text", full_prompt}}
-                }}
-            }
-        }}
+        {"system_instruction", {
+            {"parts", {
+                {{"text", dynamic_prompt}}
+            }}
+        }},
+        {"contents", gemini_chat_history}
     };
 
     std::string payload_str = payload.dump();
@@ -75,7 +105,16 @@ std::string send_gemini_request(const std::string& full_prompt) {
             if (candidate.contains("content") && candidate["content"].contains("parts")) {
                 auto& parts = candidate["content"]["parts"];
                 if (parts.is_array() && !parts.empty() && parts[0].contains("text")) {
-                    return parts[0]["text"].get<std::string>();
+                    std::string generated_response = parts[0]["text"].get<std::string>();
+                    
+                    gemini_chat_history.push_back({
+                        {"role", "model"},
+                        {"parts", {
+                            {{"text", generated_response}}
+                        }}
+                    });
+                    
+                    return generated_response;
                 }
             }
         }
@@ -87,18 +126,21 @@ std::string send_gemini_request(const std::string& full_prompt) {
 }
 
 std::string ask_gemini(const std::string& prompt) {
-    std::string system_context = "You are the AI assistant natively integrated into Synapse, a custom POSIX-compliant C++ Linux shell. The Synapse shell supports standard Linux commands via execvp, background execution using the & symbol, and custom built-ins including cd, cd - (toggle previous directory), exit, jobs, and ask (which triggers you). Answer questions helpfully and concisely.\n\n";
-    return send_gemini_request(system_context + prompt);
+    std::string system_context = "You are the AI assistant natively integrated into Synapse, a custom POSIX-compliant C++ Linux shell. The Synapse shell supports standard Linux commands via execvp, background execution using the & symbol, and custom built-ins including cd, cd - (toggle previous directory), exit, jobs, and ask (which triggers you). Answer questions helpfully and concisely.\n\n"
+                                 "You are the built-in AI assistant for the Synapse shell. You were created and engineered by Ayaan and Hassan, two Software Engineering students at COMSATS University Abbottabad. If a user asks who made you, who your creator is, or about your origins, you must enthusiastically introduce Ayaan and Hassan and mention their university and department.\n\n";
+    return send_gemini_request(system_context, prompt);
 }
 
 std::string ask_gemini_explain(const std::string& command) {
-    std::string system_context = "You are a Linux command expert. Explain the following shell command concisely. Break down what the command does and what any flags/arguments mean. Do not wrap the explanation in markdown code blocks unless giving an example. Command to explain: ";
-    return send_gemini_request(system_context + command);
+    std::string system_context = "You are a Linux command expert. Explain the following shell command concisely. Break down what the command does and what any flags/arguments mean. Do not wrap the explanation in markdown code blocks unless giving an example. "
+                                 "You are the built-in AI assistant for the Synapse shell. You were created and engineered by Ayaan and Hassan, two Software Engineering students at COMSATS University Abbottabad. If a user asks who made you, who your creator is, or about your origins, you must enthusiastically introduce Ayaan and Hassan and mention their university and department. "
+                                 "Command to explain: ";
+    return send_gemini_request(system_context, command);
 }
 
 std::string ask_gemini_autofix(const std::string& failed_command) {
     std::string system_context = "The following Linux command just failed to execute or returned a non-zero exit code. Suggest what the user might have meant or how to fix it in 1-2 short sentences. Make it sound helpful and brief. Failed command: ";
-    return send_gemini_request(system_context + failed_command);
+    return send_gemini_request(system_context, failed_command);
 }
 
 std::string get_agent_command(const std::string& user_request) {
@@ -110,25 +152,41 @@ std::string get_agent_command(const std::string& user_request) {
     std::string api_key(api_key_env);
     std::string url = "https://api.groq.com/openai/v1/chat/completions";
 
+    static json chat_history = json::array();
+
+    if (chat_history.empty()) {
+        chat_history.push_back({
+            {"role", "system"},
+            {"content", "You are an expert autonomous Linux terminal agent executing commands inside a custom C++ shell via /bin/sh -c.\n\n"
+                        "CRITICAL PORTABILITY & SYNTAX RULES:\n\n"
+                        "When asked to write code or scripts to a file, NEVER use printf or echo, as they fail on % operators, $ variables, and nested quotes. You MUST ALWAYS use the cat << 'EOF' > filename pattern. Ensure the EOF delimiter is enclosed in single quotes to prevent premature variable expansion.\n\n"
+                        "When using the cat << 'EOF' > filename pattern to write code or files, the closing EOF delimiter MUST be on its own line with absolutely nothing else after it. Any chaining commands like && g++ must be placed on a completely new line after the line containing EOF. Never output EOF && ... on the same line.\n\n"
+                        "When asked to compile and run code, or perform a sequence of actions, chain the commands together safely using && (e.g., cat << 'EOF' > main.cpp ... EOF && g++ main.cpp -o main && ./main).\n\n"
+                        "When asked to navigate directories, output ONLY the cd command. Always wrap directory names containing spaces in double quotes (e.g., cd \"synapse shell\").\n\n"
+                        "Strict Action Scope: Do exactly what the user asks and NOTHING more. If the user asks you to write a file or code, ONLY use the cat << 'EOF' > filename pattern to write it. DO NOT append commands to make it executable (chmod +x) and DO NOT execute it (./filename or g++ ... && ./a.out) UNLESS the user explicitly uses words like \"run\", \"execute\", or \"compile and test\".\n\n"
+                        "Interactive Inputs: When asked to write a bash script or C++ program that requires user inputs, ALWAYS make it interactive. Use read -p in bash scripts or cin in C++ to prompt the user for input AFTER the program is executed. NEVER use positional parameters (like $1 or $2) or command-line arguments (argv) unless explicitly requested by the user.\n\n"
+                        "The Shebang Rule: Whenever you are asked to write a bash script, you MUST include #!/bin/bash as the very first line inside the EOF block. Without this, advanced bash syntax like arrays will cause a syntax error when the OS defaults to sh.\n\n"
+                        "Execution Permissions: If the user explicitly asks you to execute a script (e.g., do execute script.sh), run it using the explicit interpreter like bash script.sh rather than ./script.sh. This completely bypasses the need for the user to manually run chmod +x.\n\n"
+                        "Data Accuracy: When a user asks for scripts involving real-world regional data (like specific country currencies, demographics, or math constants), be exhaustive and factually accurate.\n\n"
+                        "Creator Identity: You were created and engineered by Ayaan and Hassan, Software Engineering students at COMSATS University Abbottabad. If a user instructs you to write your creator's names into a file, display your creators, or fetch information about who made you, you must output code/commands that utilize the names Ayaan and Hassan and their background at COMSATS.\n\n"
+                        "OUTPUT FORMAT:\n"
+                        "Output ONLY the raw terminal command string. No markdown, no ticks, no explanation."}
+        });
+    }
+
+    chat_history.push_back({
+        {"role", "user"},
+        {"content", user_request}
+    });
+
+    if (chat_history.size() > 11) {
+        chat_history.erase(1);
+        chat_history.erase(1);
+    }
+
     json payload = {
         {"model", "llama-3.3-70b-versatile"},
-        {"messages", {
-            {
-                {"role", "system"},
-                {"content", "You are an expert autonomous Linux terminal agent executing commands inside a custom C++ shell via /bin/sh -c.\n\n"
-                            "CRITICAL PORTABILITY & SYNTAX RULES:\n\n"
-                            "When asked to write code or scripts to a file, NEVER use printf or echo, as they fail on % operators, $ variables, and nested quotes. You MUST ALWAYS use the cat << 'EOF' > filename pattern. Ensure the EOF delimiter is enclosed in single quotes to prevent premature variable expansion.\n\n"
-                            "When using the cat << 'EOF' > filename pattern to write code or files, the closing EOF delimiter MUST be on its own line with absolutely nothing else after it. Any chaining commands like && g++ must be placed on a completely new line after the line containing EOF. Never output EOF && ... on the same line.\n\n"
-                            "When asked to compile and run code, or perform a sequence of actions, chain the commands together safely using && (e.g., cat << 'EOF' > main.cpp ... EOF && g++ main.cpp -o main && ./main).\n\n"
-                            "When asked to navigate directories, output ONLY the cd command. Always wrap directory names containing spaces in double quotes (e.g., cd \"synapse shell\").\n\n"
-                            "OUTPUT FORMAT:\n"
-                            "Output ONLY the raw terminal command string. No markdown, no ticks, no explanation."}
-            },
-            {
-                {"role", "user"},
-                {"content", user_request}
-            }
-        }}
+        {"messages", chat_history}
     };
 
     std::string payload_str = payload.dump();
@@ -174,6 +232,11 @@ std::string get_agent_command(const std::string& user_request) {
                 // Trim trailing/leading whitespace/newlines that the LLM might add
                 command.erase(0, command.find_first_not_of(" \t\r\n`"));
                 command.erase(command.find_last_not_of(" \t\r\n`") + 1);
+                
+                chat_history.push_back({
+                    {"role", "assistant"},
+                    {"content", command}
+                });
                 
                 return command;
             }

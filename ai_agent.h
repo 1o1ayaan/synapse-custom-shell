@@ -3,6 +3,9 @@
 
 #include <string>
 
+extern std::string current_mode;
+extern int mode_intensity;
+
 // Sends a prompt to the Gemini API and returns the plain text response.
 std::string ask_gemini(const std::string& prompt);
 

@@ -314,7 +314,6 @@ void print_startup_banner() {
               << " |____/  |_| |_| \\_/_/   \\_\\_|   |____/|_____|\n"
               << "                                              \n"
               << "v1.0 | AI-Integrated POSIX Shell\n"
-              << "MADE BY HASSAN AND AYAN"
               << "\033[0m" << std::endl;
 }
 
@@ -453,6 +452,55 @@ int main() {
                 }
             }
             pthread_mutex_unlock(&jobs_mutex);
+            continue;
+        }
+
+        // Built-in command: mode
+        if (tokens[0] == "mode") {
+            if (tokens.size() < 2) {
+                std::cerr << "synapse: mode: missing type" << std::endl;
+                continue;
+            }
+            std::string type = tokens[1];
+            
+            if (type == "default") {
+                current_mode = "default";
+                mode_intensity = 0;
+                std::cout << "[Synapse] Personality reset to default." << std::endl;
+                continue;
+            }
+
+            if (type != "funny" && type != "angry" && type != "sad" && 
+                type != "supportive" && type != "sarcastic" && 
+                type != "poetic" && type != "hacker") {
+                std::cerr << "[Synapse Error] Unknown mode. Available modes: default, funny, angry, sad, supportive, sarcastic, poetic, hacker." << std::endl;
+                continue;
+            }
+
+            int intensity = 100;
+            if (tokens.size() > 2) {
+                try {
+                    intensity = std::stoi(tokens[2]);
+                } catch (...) {
+                    std::cerr << "[Synapse Error] Invalid intensity level." << std::endl;
+                    continue;
+                }
+            }
+
+            current_mode = type;
+            mode_intensity = intensity;
+            std::cout << "[Synapse] Mode updated to '" << current_mode << "' (" << mode_intensity << "%). Context preserved.\n";
+            continue;
+        }
+
+        // Built-in command: history
+        if (tokens[0] == "history") {
+            HIST_ENTRY **the_list = history_list();
+            if (the_list) {
+                for (int i = 0; the_list[i]; i++) {
+                    std::cout << "  " << i + 1 << "  " << the_list[i]->line << std::endl;
+                }
+            }
             continue;
         }
 
